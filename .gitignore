@@ -1,0 +1,5 @@
+
+examples/ignore_examples
+bin/debugging.py
+bin/testing.py
+bin/tiedie_og

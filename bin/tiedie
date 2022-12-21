@@ -29,7 +29,8 @@
 
 from __future__ import print_function
 from __future__ import division
-import os, sys
+import os, sys, time
+import pandas as pd
 from collections import defaultdict
 from optparse import OptionParser
 parser = OptionParser()
@@ -71,6 +72,21 @@ parser.add_option("--pagerank",dest="pagerank",action="store_true",default=False
 help="Use Personalized PageRank to Diffuse")
 parser.add_option("--all_paths",dest="all_paths",action="store_true",default=False)
 parser.add_option("--output_folder",dest="output_folder",action="store",default='TieDIE')
+
+## Extra flags from phospho signaling
+## By default, permumation tests are not made. These take etremely long, so False by default.
+parser.add_option("--permutation",dest="permutation",action="store_true",default=False,help="Use permutation tests from original TieDie")
+parser.add_option("--saved_diffusion",dest="saved_diffusion",action="store_true",default=False,help="Use saved diffusion results from previous run")
+
+## By default, usual TieDie (two diffusions) is used. We can set to True to use only the diffusion from UpHeats in the algorithm.
+parser.add_option("--single_diffusion",dest="single_diffusion",action="store_true",default=False,help="Use only upstream diffusion")
+
+parser.add_option("--edge_weights",dest="edge_weights",action="store",default=None)
+parser.add_option("--lower_w",dest="lower_w",action="store",default = 0.4)
+parser.add_option("--upper_w",dest="upper_w",action="store",default = 2)
+parser.add_option("--max_penalty",dest="max_penalty",action="store",default = 0.7, type = "float")
+parser.add_option("--edge_stress",dest="edge_stress",action="store",default = None)
+parser.add_option("--edge_boost",dest="edge_boost",action="store",default = None, type = "float")
 (opts, args) = parser.parse_args()
 
 # local imports assume the directory structure from github .
@@ -83,6 +99,11 @@ from tiedie_util import *
 from master_reg import *
 
 ##
+## If using single_diffusion and no down_heat is supplied (which is fine), use up_heats as 
+## down_heats to prevent possible fatal errors below.
+if opts.single_diffusion:
+	opts.down_heats = opts.up_heats
+	print(opts.down_heats)
 ## Basic input validation
 ##
 # Fatal Errors
@@ -142,7 +163,10 @@ def extractSubnetwork(up_heats, down_heats, up_heats_diffused, down_heats_diffus
 		# optional: use the Prize Collecting Steiner Tree formulation to connect the network
 		ugraph = runPCST(up_heats, down_heats, linker_nodes, opts.network)
 	else:
-		nodes = set(up_heats).union(set(down_heats)).union(set(linker_nodes))
+		if opts.single_diffusion:
+			nodes = set(up_heats).union(set(linker_nodes))
+		else: 
+			nodes = set(up_heats).union(set(down_heats)).union(set(linker_nodes))
 		# simply find connected edges with both nodes in the selected set
 		ugraph = connectedSubnets(network, nodes)
 
@@ -304,7 +328,7 @@ if not os.path.exists(output_folder):
 
 if opts.pagerank:
 	# use PageRank to diffuse heats: create a diffuser object to perform this step
-	diffuser = PPrDiffuser(network)
+	diffuser = PPrDiffuser(network, opts.lower_w, opts.upper_w, opts.max_penalty, edge_weights = opts.edge_weights, edge_stress = opts.edge_stress, edge_boost = opts.edge_boost)
 else:
 	if opts.kernel is not None:
 		sys.stderr.write("Loading Heat Diffusion Kernel..\n")
@@ -317,15 +341,34 @@ else:
 		diffuser = SciPYKernel(opts.network)
 
 # Check to make sure the node universe matches the
-k_labels = diffuser.getLabels()
-if len(network_nodes) != len(k_labels) or len(network_nodes.intersection(k_labels)) != len(k_labels):
-	sys.stderr.write("Error: the universe of gene/node labels in the network file doesn't match the supplied kernel file!\n")
-	sys.exit(1)
+# k_labels = diffuser.getLabels()
+# if len(network_nodes) != len(k_labels) or len(network_nodes.intersection(k_labels)) != len(k_labels):
+# 	sys.stderr.write("Error: the universe of gene/node labels in the network file doesn't match the supplied kernel file!\n")
+# 	sys.exit(1)
 
-sys.stderr.write("Diffusing Heats...\n")
+#sys.stderr.write("Diffusing Heats...\n")
 # Separately perform diffusion for each input set
-up_heats_diffused = diffuser.diffuse(up_heats, reverse=False)
-down_heats_diffused = diffuser.diffuse(down_heats, reverse=True)
+if (os.path.exists("down_heats_diffused.txt") & os.path.exists("up_heats_diffused.txt") & opts.saved_diffusion):
+	sys.stderr.write("Using saved diffused-heat files\n")
+	up_saved, down_saved = pd.read_csv("up_heats_diffused.txt", sep = "\t"), pd.read_csv("down_heats_diffused.txt", sep = "\t")
+	up_keys, down_keys = up_saved['key'].to_list(), down_saved['key'].to_list()
+	up_values, down_values = up_saved['value'].to_list(), down_saved['value'].to_list()
+	up_heats_diffused = {up_keys[i] : up_values[i] for i in range(len(up_keys))}
+	down_heats_diffused = {down_keys[i] : down_values[i] for i in range(len(down_keys))}
+else :
+	sys.stderr.write("Running diffusion\n")
+	up_heats_diffused = diffuser.diffuse(up_heats, reverse=False)
+	down_heats_diffused = diffuser.diffuse(down_heats, reverse=True)
+	if opts.saved_diffusion:
+		pd.DataFrame({"key" : down_heats_diffused.keys(), "value" : down_heats_diffused.values()}).to_csv(opts.output_folder + '/down_heats_diffused.txt', sep = "\t", index = False)
+		pd.DataFrame({"key" : up_heats_diffused.keys(), "value" : up_heats_diffused.values()}).to_csv(opts.output_folder + '/up_heats_diffused.txt', sep = "\t", index = False)
+
+
+if (opts.single_diffusion):
+	max_heat = max(down_heats_diffused.values())
+	for node in down_heats_diffused.keys():
+		down_heats_diffused[node] = max_heat
+	# pd.DataFrame({"key" : down_heats_diffused.keys(), "value" : down_heats_diffused.values()}).to_csv(opts.output_folder + '/sanity_check_2.txt', sep = "\t", index = False)
 
 # Extract a subnetwork solution from the diffused heats, the set of nodes found, the Relevance score for this network solution
 # and the heat scores for all linker genes
@@ -387,42 +430,44 @@ sys.stderr.write("Writing Report to "+report_file+" :compactness analysis\n")
 score = scoreSubnet(subnet_soln_nodes, up_heats, down_heats, report_fh)
 report_fh.write("Compactness Score:"+str(score)+"\n")
 
-sys.stderr.write("Running permutation tests... (could take several minutes for inputs of hundreds of genes @1000 permutations)\n")
+if opts.permutation:
+	sys.stderr.write("Running permutation tests... (could take several minutes for inputs of hundreds of genes @1000 permutations)\n")
 
-# Instantiate to perform random permutations of the upstream heats, using the topology of the network
-# to correct for node degree
-perObj = NetBalancedPermuter(network, up_heats)
-# Perform the number random permutations specified (default 1000)
-permutedHeats = perObj.permute(PERMUTE)
-# scores for each of the permutations
-permuted_scores = []
-for heats in permutedHeats:
-	# diffuse the permuted scores, then find the Relevance score for that permuted set
-	diffused_heats =  diffuser.diffuse(heats)
-	cutoff, score = findLinkerCutoff(heats, down_heats, diffused_heats, down_heats_diffused, size_control)
-	permuted_scores.append(score)
+	# Instantiate to perform random permutations of the upstream heats, using the topology of the network
+	# to correct for node degree
+	perObj = NetBalancedPermuter(network, up_heats)
+	# Perform the number random permutations specified (default 1000)
+	permutedHeats = perObj.permute(PERMUTE)
+	# scores for each of the permutations
 
-# write out the distribution for significance plot
-sig_fh = open(output_folder+"/score.txt", 'w')
-sig_fh.write(str(alpha_score)+"\n")
-sig_fh.close()
-sig_fh = open(output_folder+"/permuted_scores.txt", 'w')
-for val in sorted(permuted_scores, reverse=True):
-	sig_fh.write(str(val)+"\n")
-sig_fh.close()
+	permuted_scores = []
+	for heats in permutedHeats:
+		# diffuse the permuted scores, then find the Relevance score for that permuted set
+		diffused_heats =  diffuser.diffuse(heats)
+		cutoff, score = findLinkerCutoff(heats, down_heats, diffused_heats, down_heats_diffused, size_control)
+		permuted_scores.append(score)
 
-# just calculate the number of permuted sets that scored better than the real input set.
-no_gte = 0.0
-for val in sorted(permuted_scores, reverse=True):
-	if val >= alpha_score:
-		no_gte += 1
-	else:
-		break
+	# write out the distribution for significance plot
+	sig_fh = open(output_folder+"/score.txt", 'w')
+	sig_fh.write(str(alpha_score)+"\n")
+	sig_fh.close()
+	sig_fh = open(output_folder+"/permuted_scores.txt", 'w')
+	for val in sorted(permuted_scores, reverse=True):
+		sig_fh.write(str(val)+"\n")
+	sig_fh.close()
 
-# Davison & Hinkley (1997): true empirical p-value is (r+1)/(n+1)
-# Compare Relevance scores for the permuted samples to compute and empirical p-value for the
-# network. Write the scores to save for plotting.
-sys.stderr.write("Writing Report to "+report_file+" :empirical p-value...\n")
-pval = (no_gte+1)/(PERMUTE+1)
-report_fh.write("P-value: "+str(pval)+" (with "+str(PERMUTE)+" random permutations)\n")
-report_fh.close()
+	# just calculate the number of permuted sets that scored better than the real input set.
+	no_gte = 0.0
+	for val in sorted(permuted_scores, reverse=True):
+		if val >= alpha_score:
+			no_gte += 1
+		else:
+			break
+
+	# Davison & Hinkley (1997): true empirical p-value is (r+1)/(n+1)
+	# Compare Relevance scores for the permuted samples to compute and empirical p-value for the
+	# network. Write the scores to save for plotting.
+	sys.stderr.write("Writing Report to "+report_file+" :empirical p-value...\n")
+	pval = (no_gte+1)/(PERMUTE+1)
+	report_fh.write("P-value: "+str(pval)+" (with "+str(PERMUTE)+" random permutations)\n")
+	report_fh.close()
