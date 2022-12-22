@@ -81,7 +81,7 @@ parser.add_option("--saved_diffusion",dest="saved_diffusion",action="store_true"
 ## By default, usual TieDie (two diffusions) is used. We can set to True to use only the diffusion from UpHeats in the algorithm.
 parser.add_option("--single_diffusion",dest="single_diffusion",action="store_true",default=False,help="Use only upstream diffusion")
 
-parser.add_option("--edge_weights",dest="edge_weights",action="store",default=None)
+parser.add_option("--edge_scores",dest="edge_scores",action="store",default=None)
 parser.add_option("--lower_w",dest="lower_w",action="store",default = 0.4)
 parser.add_option("--upper_w",dest="upper_w",action="store",default = 2)
 parser.add_option("--max_penalty",dest="max_penalty",action="store",default = 0.7, type = "float")
@@ -328,7 +328,7 @@ if not os.path.exists(output_folder):
 
 if opts.pagerank:
 	# use PageRank to diffuse heats: create a diffuser object to perform this step
-	diffuser = PPrDiffuser(network, opts.lower_w, opts.upper_w, opts.max_penalty, edge_weights = opts.edge_weights, edge_stress = opts.edge_stress, edge_boost = opts.edge_boost)
+	diffuser = PPrDiffuser(network, opts.lower_w, opts.upper_w, opts.max_penalty, edge_scores = opts.edge_scores, edge_stress = opts.edge_stress, edge_boost = opts.edge_boost)
 else:
 	if opts.kernel is not None:
 		sys.stderr.write("Loading Heat Diffusion Kernel..\n")
@@ -348,9 +348,10 @@ else:
 
 #sys.stderr.write("Diffusing Heats...\n")
 # Separately perform diffusion for each input set
-if (os.path.exists("down_heats_diffused.txt") & os.path.exists("up_heats_diffused.txt") & opts.saved_diffusion):
+if (os.path.exists(opts.output_folder + "/down_heats_diffused.txt") & os.path.exists(opts.output_folder + "/up_heats_diffused.txt") & opts.saved_diffusion):
 	sys.stderr.write("Using saved diffused-heat files\n")
-	up_saved, down_saved = pd.read_csv("up_heats_diffused.txt", sep = "\t"), pd.read_csv("down_heats_diffused.txt", sep = "\t")
+	up_saved = pd.read_csv(opts.output_folder + "/up_heats_diffused.txt", sep = "\t")
+	down_saved = pd.read_csv(opts.output_folder + "/down_heats_diffused.txt", sep = "\t")
 	up_keys, down_keys = up_saved['key'].to_list(), down_saved['key'].to_list()
 	up_values, down_values = up_saved['value'].to_list(), down_saved['value'].to_list()
 	up_heats_diffused = {up_keys[i] : up_values[i] for i in range(len(up_keys))}

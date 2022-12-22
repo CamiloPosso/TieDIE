@@ -6,7 +6,7 @@ import pandas as pd
 
 class PPrDiffuser:
 
-	def __init__(self, network, lower_w, upper_w, max_penalty, edge_weights = None, edge_stress = None, edge_boost = None):
+	def __init__(self, network, lower_w, upper_w, max_penalty, edge_scores = None, edge_stress = None, edge_boost = None):
 		'''
 			PPrDiffuser: object to perform the Personalized PageRank Algorithm
 			This method creates the diffuser object from an networkx DiGraph() object,
@@ -31,8 +31,8 @@ class PPrDiffuser:
 				self.G.add_edge(source, t, weight = 1)
 				self.G_reversed.add_edge(t, source, weight = 1)
 
-		if (edge_weights is not None):
-			self.add_edge_weights(edge_weights)
+		if (edge_scores is not None):
+			self.add_edge_weights(edge_scores)
 
 
 	def weight_helper(self, edge_score):
@@ -46,8 +46,8 @@ class PPrDiffuser:
 		edge_weight = (1 - self.max_penalty) + ((x - self.lower_w)/(self.upper_w - self.lower_w)) * self.max_penalty
 		return edge_weight
 	
-	def add_edge_weights(self, edge_weights):
-		net_w = pd.read_csv(edge_weights, sep = "\t", header = None)
+	def add_edge_weights(self, edge_scores):
+		net_w = pd.read_csv(edge_scores, sep = "\t", header = None)
 
 		for i in range(len(net_w.index)):
 			#network[net_w.iloc[i, 1]][net_w.iloc[i, ]]['edge_weigth'] = weight_helper(net_w[4][i])
@@ -66,7 +66,7 @@ class PPrDiffuser:
 				self.G_reversed[net_s[2][i]][net_s[0][i]]['weight'] = min(self.G_reversed[net_s[2][i]][net_s[0][i]]['weight'] * (net_s[3][i]/max_count) * self.edge_boost, 1)
 
 		sanity_check = nx.to_pandas_edgelist(self.G)
-		sanity_check.to_csv('edge_weights_sanity_check.txt', sep = "\t", index = False)
+		# sanity_check.to_csv('edge_weights_sanity_check.txt', sep = "\t", index = False)
 
 
 	def personal_page_rank(self, p_vector, reverse=False):
